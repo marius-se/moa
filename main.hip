@@ -1,5 +1,9 @@
+#include "csv_loader.h"
+
 #include <iostream>
 #include <limits>
+#include <string>
+#include <vector>
 #include "hip/hip_runtime.h"
 
 using namespace std;
@@ -8,12 +12,12 @@ class Graph {
 public:
     Graph(int vertices[], int numberOfVertices, int edges[], int numberOfEdges);
     void bfs(int startVertex);
+    int numberOfVertices;
+    int numberOfEdges;
 
 private:
     int *vertices;
-    int numberOfVertices;
     int *edges;
-    int numberOfEdges;
 };
 
 // TODO: Migrate to list or vector, add cpu bfs, write tests, load large csv and benchmark
@@ -84,18 +88,19 @@ void Graph::bfs(int startVertex) {
     hipMalloc((void**)&d_edges, numberOfEdges * sizeof(int));
     hipMalloc((void**)&d_frontier, numberOfVertices * sizeof(bool));
     hipMalloc((void**)&d_visited, numberOfVertices * sizeof(bool));
-    assert(hipMalloc((void**)&d_cost, numberOfVertices * sizeof(int)) == hipSuccess);
+    hipMalloc((void**)&d_cost, numberOfVertices * sizeof(int));
 
     // Copy data to GPU
     hipMemcpy(d_vertices, vertices, numberOfVertices * sizeof(int), hipMemcpyHostToDevice);
     hipMemcpy(d_edges, edges, numberOfEdges * sizeof(int), hipMemcpyHostToDevice);
     hipMemcpy(d_frontier, frontier, numberOfVertices * sizeof(bool), hipMemcpyHostToDevice);
     hipMemcpy(d_visited, visited, numberOfVertices * sizeof(bool), hipMemcpyHostToDevice);
-    assert(hipMemcpy(d_cost, cost, numberOfVertices * sizeof(int), hipMemcpyHostToDevice) == hipSuccess);
+    hipMemcpy(d_cost, cost, numberOfVertices * sizeof(int), hipMemcpyHostToDevice);
 
     const unsigned threadsPerBlock = 256;
     const unsigned blocks = (numberOfVertices + threadsPerBlock - 1) / threadsPerBlock;
     setbuf(stdout, NULL);
+
     while (true) {
         // call kernel
         hipLaunchKernelGGL(bfsKernel, dim3(blocks), dim3(threadsPerBlock), 0, 0, d_vertices, d_edges, d_frontier, d_visited, d_cost);
@@ -128,13 +133,54 @@ void Graph::bfs(int startVertex) {
     hipFree(d_frontier);
     hipFree(d_visited);
 
-    for (auto i = 0; i < numberOfVertices; ++i) {
+    /* for (auto i = 0; i < numberOfVertices; ++i) {
         cout << "Distance from " << startVertex << " to " << i << " is: " << cost[i] << endl;
-    }
+    }*/
 
     delete [] frontier;
     delete [] visited;
     delete [] cost;
+}
+
+/**
+ * Turns a csv file into a Graph. Assumes the following csv structure:
+ * "from vertex, to vertex"
+ * - where the from vertex column is ordered in ascending order
+ * - there are no duplicates
+ * - there is no header row
+ */
+Graph csvToGraph(string filePath) {
+    vector<vector<string>> csvRows = CSVLoader::readCSV(filePath);
+    vector<int> vertexPointers { 0 };
+    vector<int> destinations;
+    
+    int currentVertex = 0;
+    int previousPointer = 0;
+    printf("Number of CSV rows: %zu\n", csvRows.size());
+    for (int i = 0; i < csvRows.size(); ++i) {
+        int fromVertex = stoi(csvRows[i][0]) - 1;
+        int toVertex = stoi(csvRows[i][1]) - 1;
+
+        if (currentVertex != fromVertex) {
+            destinations.push_back(-1);
+            destinations.push_back(toVertex);
+            previousPointer += 2;
+            vertexPointers.push_back(previousPointer);
+            currentVertex = fromVertex;
+        } else {
+            destinations.push_back(toVertex);
+            previousPointer++;
+        }
+    }
+
+    int numberOfVertices = vertexPointers.size();
+    int* vertices = &vertexPointers[0];
+    int numberOfEdges = destinations.size();
+    int* edges = &destinations[0];
+
+    Graph graph(vertices, numberOfVertices, edges, numberOfEdges);
+
+    return graph;
 }
 
 int main(void) {
@@ -145,15 +191,13 @@ int main(void) {
     cout << " System major " << devProp.major << endl;
     cout << " agent prop name " << devProp.name << endl;
 
-    int vertices[] = { 0, 3, 5, 7 };
-    int numberOfVertices = 4;
+    Graph g = csvToGraph("/home/marius/Downloads/soc-pokec-relationships.csv");
 
-    int edges[] = { 2, 3, -1, 3, -1, 0, -1, 2, 2, -1 };
-    int numberOfEdges = 10;
+    printf("Number of vertices: %d\n", g.numberOfVertices);
+    printf("Number of edges: %d\n", g.numberOfEdges);
+    printf("True number of edges: %d\n", g.numberOfEdges - g.numberOfVertices);
 
-    Graph g(vertices, numberOfVertices, edges, numberOfEdges);
-
-    g.bfs(0);
+    g.bfs(4);
 
     return 0;
 }
