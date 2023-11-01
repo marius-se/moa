@@ -2,6 +2,8 @@
 
 #include <iostream>
 #include <limits>
+#include <list>
+#include <set>
 #include <string>
 #include <vector>
 #include "hip/hip_runtime.h"
@@ -12,6 +14,8 @@ class Graph {
 public:
     Graph(int vertices[], int numberOfVertices, int edges[], int numberOfEdges);
     void bfs(int startVertex);
+    void bfsCPU(int startVertex);
+    ~Graph();
     int numberOfVertices;
     int numberOfEdges;
 
@@ -36,11 +40,17 @@ Graph::Graph(int vertices[], int numberOfVertices, int edges[], int numberOfEdge
     this->numberOfEdges = numberOfEdges;
 }
 
-__global__ void bfsKernel(int vertices[], int edges[], bool frontier[], bool visited[], int cost[]) {
-    int tid = hipBlockIdx_x * hipBlockDim_x + hipThreadIdx_x;
+Graph::~Graph() {
+    delete[] vertices;
+    delete[] edges;
+}
 
-    if (tid < 4 && frontier[tid]) {
-        printf("Thread ID: %d\n", tid);
+__global__ void bfsKernel(const int vertices[], const int edges[], bool frontier[], bool visited[], int cost[], const int* numberOfVerticesPointer) {
+    int tid = hipBlockIdx_x * hipBlockDim_x + hipThreadIdx_x;
+    int numberOfVertices = *numberOfVerticesPointer;
+
+    if (tid < numberOfVertices && frontier[tid]) {
+        // printf("Thread ID: %d\n", tid);
         frontier[tid] = false;
         visited[tid] = true;
 
@@ -49,7 +59,7 @@ __global__ void bfsKernel(int vertices[], int edges[], bool frontier[], bool vis
         while (edges[nid] != -1) {
             int neighbor = edges[nid];
 
-            if (neighbor >= 0 && neighbor < 4) {
+            if (neighbor >= 0 && neighbor < numberOfVertices) {
               if (!visited[neighbor]) {
                 cost[neighbor] = cost[tid] + 1;
                 frontier[neighbor] = true;
@@ -81,7 +91,7 @@ void Graph::bfs(int startVertex) {
     cost[startVertex] = 0;
 
     // Allocate GPU memory
-    int *d_vertices, *d_edges, *d_cost;
+    int *d_vertices, *d_edges, *d_cost, *d_numberOfVertices;
     bool *d_frontier, *d_visited;
 
     hipMalloc((void**)&d_vertices, numberOfVertices * sizeof(int));
@@ -89,6 +99,7 @@ void Graph::bfs(int startVertex) {
     hipMalloc((void**)&d_frontier, numberOfVertices * sizeof(bool));
     hipMalloc((void**)&d_visited, numberOfVertices * sizeof(bool));
     hipMalloc((void**)&d_cost, numberOfVertices * sizeof(int));
+    hipMalloc((void**)&d_numberOfVertices, sizeof(int));
 
     // Copy data to GPU
     hipMemcpy(d_vertices, vertices, numberOfVertices * sizeof(int), hipMemcpyHostToDevice);
@@ -96,14 +107,14 @@ void Graph::bfs(int startVertex) {
     hipMemcpy(d_frontier, frontier, numberOfVertices * sizeof(bool), hipMemcpyHostToDevice);
     hipMemcpy(d_visited, visited, numberOfVertices * sizeof(bool), hipMemcpyHostToDevice);
     hipMemcpy(d_cost, cost, numberOfVertices * sizeof(int), hipMemcpyHostToDevice);
+    hipMemcpy(d_numberOfVertices, &numberOfVertices, sizeof(int), hipMemcpyHostToDevice);
 
     const unsigned threadsPerBlock = 256;
     const unsigned blocks = (numberOfVertices + threadsPerBlock - 1) / threadsPerBlock;
-    setbuf(stdout, NULL);
 
     while (true) {
         // call kernel
-        hipLaunchKernelGGL(bfsKernel, dim3(blocks), dim3(threadsPerBlock), 0, 0, d_vertices, d_edges, d_frontier, d_visited, d_cost);
+        hipLaunchKernelGGL(bfsKernel, dim3(blocks), dim3(threadsPerBlock), 0, 0, d_vertices, d_edges, d_frontier, d_visited, d_cost, d_numberOfVertices);
 
         // we only process one BFS level at a time so we wait:
         hipDeviceSynchronize();
@@ -132,6 +143,7 @@ void Graph::bfs(int startVertex) {
     hipFree(d_cost);
     hipFree(d_frontier);
     hipFree(d_visited);
+    hipFree(d_numberOfVertices);
 
     /* for (auto i = 0; i < numberOfVertices; ++i) {
         cout << "Distance from " << startVertex << " to " << i << " is: " << cost[i] << endl;
@@ -142,6 +154,35 @@ void Graph::bfs(int startVertex) {
     delete [] cost;
 }
 
+void Graph::bfsCPU(int startVertex) { 
+    vector<bool> visited(numberOfVertices, false);
+    vector<int> cost(numberOfVertices, numeric_limits<int>::max());
+    list<int> queue;
+
+    visited[startVertex] = true;
+    cost[startVertex] = 0;
+    queue.push_back(startVertex);
+
+    printf("\n");
+    int maxCost = 0;
+    while(!queue.empty()) {
+        int currentPointer = queue.front();
+        queue.pop_front();
+
+        for (int i = currentPointer; edges[i] != -1; ++i) {
+            int neighbor = edges[i];
+
+            if (!visited[neighbor] && neighbor < numberOfVertices) {
+                cost[neighbor] = cost[currentPointer] + 1;
+                maxCost = max(cost[neighbor], maxCost);
+                printf("\rCurrent level: %d", maxCost);
+                visited[neighbor] = true;
+                queue.push_back(neighbor);
+            }
+        }
+    }
+    printf("\n");
+}
 /**
  * Turns a csv file into a Graph. Assumes the following csv structure:
  * "from vertex, to vertex"
@@ -149,7 +190,7 @@ void Graph::bfs(int startVertex) {
  * - there are no duplicates
  * - there is no header row
  */
-Graph csvToGraph(string filePath) {
+Graph* csvToGraph(string filePath) {
     vector<vector<string>> csvRows = CSVLoader::readCSV(filePath);
     vector<int> vertexPointers { 0 };
     vector<int> destinations;
@@ -178,12 +219,12 @@ Graph csvToGraph(string filePath) {
     int numberOfEdges = destinations.size();
     int* edges = &destinations[0];
 
-    Graph graph(vertices, numberOfVertices, edges, numberOfEdges);
-
-    return graph;
+    return new Graph(vertices, numberOfVertices, edges, numberOfEdges);
 }
 
 int main(void) {
+
+    setbuf(stdout, NULL);
 
     hipDeviceProp_t devProp;
     hipGetDeviceProperties(&devProp, 1);
@@ -191,13 +232,19 @@ int main(void) {
     cout << " System major " << devProp.major << endl;
     cout << " agent prop name " << devProp.name << endl;
 
-    Graph g = csvToGraph("/home/marius/Downloads/soc-pokec-relationships.csv");
+    Graph* g = csvToGraph("/home/marius/Downloads/soc-pokec-relationships.csv");
 
-    printf("Number of vertices: %d\n", g.numberOfVertices);
-    printf("Number of edges: %d\n", g.numberOfEdges);
-    printf("True number of edges: %d\n", g.numberOfEdges - g.numberOfVertices);
+    printf("Number of vertices: %d\n", g->numberOfVertices);
+    printf("Number of edges: %d\n", g->numberOfEdges);
+    printf("True number of edges: %d\n", g->numberOfEdges - g->numberOfVertices);
 
-    g.bfs(4);
+    // g.bfs(4);
+    
+    for (int i = 500000; i < 501000; ++i) {
+        g->bfsCPU(i);
+    }
+
+    delete g;
 
     return 0;
 }
