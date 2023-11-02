@@ -3,10 +3,11 @@
 
 #include <string>
 #include <vector>
+#include <array>
 
 class CSVLoader {
 public:
-    static std::vector<std::vector<std::string>> readCSV(std::string filePath);
+    static std::vector<std::array<int, 2>> readCSV(std::string filePath);
 };
 
 #endif

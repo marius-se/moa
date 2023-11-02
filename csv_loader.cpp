@@ -1,38 +1,40 @@
 #include "csv_loader.h"
 
+#include <array>
 #include <fstream>
-#include <sstream>
-#include <iostream>
-#include <string>
 #include <iomanip>
+#include <iostream>
+#include <sstream>
+#include <string>
 #include <vector>
 
 using namespace std;
 
-vector<vector<string>> CSVLoader::readCSV(string filePath) {
-    ifstream input{filePath};
+vector<array<int, 2>> CSVLoader::readCSV(string filePath) {
+  ifstream input{filePath};
 
-    if (!input.is_open()) {
-        cerr << "Couldn't read file: " << filePath << endl;
-        vector<vector<string>>();
-    }
+  if (!input.is_open()) {
+    cerr << "Couldn't read file: " << filePath << endl;
+    vector<vector<int>>();
+  }
 
-    vector<vector<string>> csvRows;
+  vector<array<int, 2>> csvRows;
 
-    for (string line; getline(input, line);) {
-        stringstream ss(std::move(line));
-        vector<string> row;
+  for (string line; getline(input, line);) {
+    stringstream ss(std::move(line));
+    array<int, 2> row;
 
-        if (!csvRows.empty()) {
-            row.reserve(csvRows.front().size());
-        }
+    string value;
+    getline(ss, value, ',');
+    row[0] = stoi(value);
 
-        for (string value; getline(ss, value, ',');) {
-            row.push_back(std::move(value));
-        }
+    getline(ss, value, ',');
+    row[1] = stoi(value);
 
-        csvRows.push_back(std::move(row));
-    }
+    csvRows.push_back(std::move(row));
+  }
 
-    return csvRows;
+  printf("Finished parsing CSV\n");
+
+  return csvRows;
 }

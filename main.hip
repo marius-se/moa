@@ -192,8 +192,8 @@ void Graph::bfsCPU(int startVertex) {
  * - there are no duplicates
  * - there is no header row
  */
-Graph* csvToGraph(string filePath) {
-    vector<vector<string>> csvRows = CSVLoader::readCSV(filePath);
+Graph* csvToGraph(string filePath, bool reverseColumns) {
+    vector<array<int, 2>> csvRows = CSVLoader::readCSV(filePath);
     vector<int> vertexPointers { 0 };
     vector<int> destinations;
     
@@ -201,8 +201,10 @@ Graph* csvToGraph(string filePath) {
     int previousPointer = 0;
     printf("Number of CSV rows: %zu\n", csvRows.size());
     for (int i = 0; i < csvRows.size(); ++i) {
-        int fromVertex = stoi(csvRows[i][0]) - 1;
-        int toVertex = stoi(csvRows[i][1]) - 1;
+        int fromVertexColumn = reverseColumns ? 1 : 0;
+        int toVertexColumn = reverseColumns ? 0 : 1;
+        int fromVertex = csvRows[i][fromVertexColumn] - 1;
+        int toVertex = csvRows[i][toVertexColumn] - 1;
 
         if (currentVertex != fromVertex) {
             destinations.push_back(-1);
@@ -234,7 +236,7 @@ int main(void) {
     cout << " System major " << devProp.major << endl;
     cout << " agent prop name " << devProp.name << endl;
 
-    Graph* g = csvToGraph("/home/marius/Developer/ogb/dataset/ogbn_arxiv/raw/edge.csv");
+    Graph* g = csvToGraph("/home/marius/Developer/ogb/edges.csv", true);
 
     printf("Number of vertices: %d\n", g->numberOfVertices);
     printf("Number of edges: %d\n", g->numberOfEdges);
@@ -243,11 +245,11 @@ int main(void) {
     // g.bfs(4);
     
     for (int i = 60000; i < 60009; ++i) {
-        auto t1 = chrono::high_resolution_clock::now();
-        g->bfsCPU(i);
-        auto t2 = chrono::high_resolution_clock::now();
-        auto ms_int = chrono::duration_cast<chrono::milliseconds>(t2 - t1);
-        printf("CPU: %ldms\n", ms_int.count());
+        // auto t1 = chrono::high_resolution_clock::now();
+        // g->bfsCPU(i);
+        // auto t2 = chrono::high_resolution_clock::now();
+        // auto ms_int = chrono::duration_cast<chrono::milliseconds>(t2 - t1);
+        // printf("CPU: %ldms\n", ms_int.count());
 
         auto tgpu1 = chrono::high_resolution_clock::now();
         g->bfs(i);
