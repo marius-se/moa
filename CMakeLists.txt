@@ -1,0 +1,11 @@
+cmake_minimum_required(VERSION 3.21)
+project(my_project VERSION 0.0.1 LANGUAGES C CXX HIP)
+
+include(FetchContent)
+include(CTest)
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS 1)
+
+add_subdirectory(src)
+add_subdirectory(tests)
+
