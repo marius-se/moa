@@ -183,7 +183,7 @@ void Graph::bfs(int startVertex) {
     delete[] cost;
 }
 
-void Graph::bfsCPU(int startVertex) {
+vector<int> Graph::bfsCPU(int startVertex) {
     vector<bool> visited(numberOfVertices, false);
     vector<int> cost(numberOfVertices, numeric_limits<int>::max());
     list<int> queue;
@@ -193,22 +193,23 @@ void Graph::bfsCPU(int startVertex) {
     queue.push_back(startVertex);
 
     printf("\n");
-    int maxCost = 0;
     while (!queue.empty()) {
-        int currentPointer = queue.front();
+        int vertex = queue.front();
         queue.pop_front();
 
-        for (int i = currentPointer; edges[i] != -1; ++i) {
+        int edgesOffset = vertices[vertex];
+
+        // loop over all edges from currentPointer on to next -1 separator
+        for (int i = edgesOffset; edges[i] != -1; ++i) {
             int neighbor = edges[i];
 
-            if (!visited[neighbor] && neighbor < numberOfVertices) {
-                cost[neighbor] = cost[currentPointer] + 1;
-                maxCost = max(cost[neighbor], maxCost);
-                printf("\rCurrent level: %d", maxCost);
+            if (!visited[neighbor]) {
+                cost[neighbor] = cost[vertex] + 1;
                 visited[neighbor] = true;
                 queue.push_back(neighbor);
             }
         }
     }
     printf("\n");
+    return cost;
 }
