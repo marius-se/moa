@@ -99,7 +99,7 @@ __global__ void bfsKernel(const int vertices[], const int edges[], bool frontier
     }
 }
 
-void Graph::bfs(int startVertex) {
+vector<int> Graph::bfs(int startVertex) {
     bool *frontier = new bool[numberOfVertices];
     for (auto i = 0; i < numberOfVertices; ++i) {
         frontier[i] = false;
@@ -178,9 +178,18 @@ void Graph::bfs(int startVertex) {
         cout << "Distance from " << startVertex << " to " << i << " is: " << cost[i] << endl;
     }*/
 
+    vector<int> vectorCost;
+    vectorCost.resize(numberOfVertices);
+
+    for (int i = 0; i < numberOfVertices; ++i) {
+        vectorCost[i] = cost[i];
+    }
+
     delete[] frontier;
     delete[] visited;
     delete[] cost;
+
+    return vectorCost;
 }
 
 vector<int> Graph::bfsCPU(int startVertex) {
