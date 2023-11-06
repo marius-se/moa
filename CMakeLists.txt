@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(my_project VERSION 0.0.1 LANGUAGES C CXX HIP)
+project(my_project VERSION 0.0.1 LANGUAGES HIP C CXX)
 
 include(FetchContent)
 include(CTest)

@@ -6,7 +6,10 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(Catch2)
 
-add_executable(tests test_csv_loader.cpp)
+find_package(HIP REQUIRED)
+
+add_executable(tests test_csv_loader.cpp test_graph.cpp)
 target_include_directories(tests PRIVATE ../src)
-target_link_libraries(tests PRIVATE moa Catch2::Catch2WithMain)
+
+target_link_libraries(tests PRIVATE moa Catch2::Catch2WithMain hip)
 
