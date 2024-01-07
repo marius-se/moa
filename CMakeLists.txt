@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.21)
+cmake_minimum_required(VERSION 3.6)
 project(my_project VERSION 0.0.1 LANGUAGES HIP C CXX)
 
 include(FetchContent)

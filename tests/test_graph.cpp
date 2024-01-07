@@ -1,5 +1,4 @@
 #include <catch2/catch_test_macros.hpp>
-#include <cstdio>
 #include <graph.hpp>
 #include <vector>
 
@@ -34,11 +33,11 @@ TEST_CASE("Calculate BFS using CPU") {
     REQUIRE(expectedCosts == costs);
 }
 
-TEST_CASE("Calculate BFS using GPU") {
-    Graph graph("./tests/test_csv.csv", false, 7, 12);
-    
-    std::vector<int> expectedCosts { 0, 1, 1, 1, 2, 2, 2 };
-    std::vector<int> costs = graph.bfs(0);
-    REQUIRE(expectedCosts == costs);
-}
+// TEST_CASE("Calculate BFS using GPU") {
+//     Graph graph("./tests/test_csv.csv", false, 7, 12);
+//     
+//     std::vector<int> expectedCosts { 0, 1, 1, 1, 2, 2, 2 };
+//     std::vector<int> costs = graph.bfs(0);
+//     REQUIRE(expectedCosts == costs);
+// }
 

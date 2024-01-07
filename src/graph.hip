@@ -6,6 +6,10 @@
 #include "csv_loader.hpp"
 #include "graph.hpp"
 
+
+// TODO: Sometimes two threads access the same element in frontier array. This likely causes the crash.
+// Most efficient solution: Go straight to Merrils BFS, since that's what we want anyway
+
 using namespace std;
 
 Graph::Graph(int vertices[], const int numberOfVertices, int edges[], const int numberOfEdges)
@@ -78,23 +82,19 @@ __global__ void bfsKernel(const int vertices[], const int edges[], bool frontier
     int numberOfVertices = *numberOfVerticesPointer;
 
     if (tid < numberOfVertices && frontier[tid]) {
-        // printf("Thread ID: %d\n", tid);
         frontier[tid] = false;
         visited[tid] = true;
 
         // for all neighbors
-        int nid = vertices[tid];
-        while (edges[nid] != -1) {
-            int neighbor = edges[nid];
+        int edgeOffset = vertices[tid];
+        for (int i = edgeOffset; edges[i] != -1; ++i) {
+            int neighbor = edges[i];
 
-            if (neighbor >= 0 && neighbor < numberOfVertices) {
-                if (!visited[neighbor]) {
-                    cost[neighbor] = cost[tid] + 1;
-                    frontier[neighbor] = true;
-                }
+            if (!visited[neighbor]) {
+                printf("Thread ID: %d. Neighbor: %d\n", tid, neighbor);
+                cost[neighbor] = cost[tid] + 1;
+                frontier[neighbor] = true;
             }
-
-            nid++;
         }
     }
 }
@@ -139,8 +139,11 @@ vector<int> Graph::bfs(int startVertex) {
 
     const unsigned threadsPerBlock = 256;
     const unsigned blocks = (numberOfVertices + threadsPerBlock - 1) / threadsPerBlock;
-
+   
+    int level = 0;
     while (true) {
+        printf("Level: %d\n\n", level);
+        level++;
         // call kernel
         hipLaunchKernelGGL(bfsKernel, dim3(blocks), dim3(threadsPerBlock), 0, 0, d_vertices, d_edges, d_frontier,
                            d_visited, d_cost, d_numberOfVertices);
@@ -150,15 +153,17 @@ vector<int> Graph::bfs(int startVertex) {
 
         // copy visited array back to CPU so we can perform the while loop condition check
         hipMemcpy(frontier, d_frontier, numberOfVertices * sizeof(bool), hipMemcpyDeviceToHost);
-
+        
         // check if we're done
         bool frontierEmpty = true;
         for (auto i = 0; i < numberOfVertices; ++i) {
+            printf("%d, ", frontier[i]);
             if (frontier[i]) {
                 frontierEmpty = false;
                 break;
             }
         }
+        printf("\n");
         if (frontierEmpty) {
             break;
         }
