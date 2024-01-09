@@ -1,29 +1,23 @@
+#include <algorithm>
+#include <hip/amd_detail/amd_hip_runtime.h>
+#include <hip/driver_types.h>
 #include <hip/hip_runtime.h>
+#include <iostream>
 #include <limits>
 #include <list>
+#include <map>
 #include <vector>
 
 #include "csv_loader.hpp"
 #include "graph.hpp"
-
+#include "hip_macros.hpp"
 
 // TODO: Sometimes two threads access the same element in frontier array. This likely causes the crash.
 // Most efficient solution: Go straight to Merrils BFS, since that's what we want anyway
 
 using namespace std;
 
-Graph::Graph(int vertices[], const int numberOfVertices, int edges[], const int numberOfEdges)
-    : numberOfVertices(numberOfVertices), numberOfEdges(numberOfEdges) {
-    this->vertices = new int[numberOfVertices];
-    for (auto i = 0; i < numberOfVertices; ++i) {
-        this->vertices[i] = vertices[i];
-    }
-
-    this->edges = new int[numberOfEdges];
-    for (auto i = 0; i < numberOfEdges; ++i) {
-        this->edges[i] = edges[i];
-    }
-}
+Graph::Graph(vector<int> vertices, vector<int> edges) : vertices(vertices), edges(edges) {}
 
 /**
  * Turns a csv file into a Graph. Assumes the following csv structure:
@@ -32,22 +26,14 @@ Graph::Graph(int vertices[], const int numberOfVertices, int edges[], const int 
  * - there are no duplicates
  * - there is no header row
  */
-Graph::Graph(const string csvFilePath, const bool reverseColumns, const int numberOfVertices, const int numberOfEdges)
-    : numberOfVertices(numberOfVertices), numberOfEdges(numberOfEdges) {
+Graph::Graph(const string csvFilePath, const bool reverseColumns, const int numberOfVertices, const int numberOfEdges) {
     vector<array<int, 2>> csvRows = CSVLoader::readCSV(csvFilePath);
-    vertices = new int[numberOfVertices];
     int edgesArraySize = numberOfEdges + numberOfVertices;
-    edges = new int[edgesArraySize];
-
-    for (int i = 0; i < numberOfVertices; ++i) {
-        // by default point all vertices to the last element in edges, which will always be -1, and thus represent a
-        // vertex without any edges
-        vertices[i] = edgesArraySize - 1;
-    }
-
-    for (int i = 0; i < edgesArraySize; ++i) {
-        edges[i] = -1;
-    }
+    this->edges = vector<int>(edgesArraySize, -1);
+    cout << edges.size() << endl;
+    // by default point all vertices to the last element in edges, which will always be -1, and thus represent a
+    // vertex without any edges
+    this->vertices = vector<int>(numberOfVertices, edgesArraySize - 1); 
 
     vertices[0] = 0;
     int currentVertex = 0;
@@ -71,133 +57,126 @@ Graph::Graph(const string csvFilePath, const bool reverseColumns, const int numb
     }
 }
 
-Graph::~Graph() {
-    delete[] vertices;
-    delete[] edges;
-}
+Graph::~Graph() {}
 
-__global__ void bfsKernel(const int vertices[], const int edges[], bool frontier[], bool visited[], int cost[],
-                          const int *numberOfVerticesPointer) {
-    int tid = hipBlockIdx_x * hipBlockDim_x + hipThreadIdx_x;
-    int numberOfVertices = *numberOfVerticesPointer;
+__global__ void simpleBfs(int N, int level, int *d_adjacencyList, int *d_edgesOffset, int *d_distance, int *d_parent,
+                          int *changed) {
+    int thid = blockIdx.x * blockDim.x + threadIdx.x;
+    int valueChange = 0;
 
-    if (tid < numberOfVertices && frontier[tid]) {
-        frontier[tid] = false;
-        visited[tid] = true;
-
-        // for all neighbors
-        int edgeOffset = vertices[tid];
-        for (int i = edgeOffset; edges[i] != -1; ++i) {
-            int neighbor = edges[i];
-
-            if (!visited[neighbor]) {
-                printf("Thread ID: %d. Neighbor: %d\n", tid, neighbor);
-                cost[neighbor] = cost[tid] + 1;
-                frontier[neighbor] = true;
+    printf("thid: %d. d_distance[thid]: %d. Level: %d\n", thid, d_distance[thid], level);
+    if (thid < N && d_distance[thid] == level) {
+        printf("N: %d. Level: %d. Changed: %d\n", N, level, *changed);
+        int u = thid;
+        for (int i = d_edgesOffset[u]; d_adjacencyList[i] != -1; i++) {
+            int v = d_adjacencyList[i];
+            if (level + 1 < d_distance[v]) {
+                // d_distance[v] = level + 1;
+                // d_parent[v] = i;
+                valueChange = 1;
             }
         }
     }
+
+    if (valueChange) {
+        *changed = valueChange;
+    }
 }
 
-vector<int> Graph::bfs(int startVertex) {
-    bool *frontier = new bool[numberOfVertices];
-    for (auto i = 0; i < numberOfVertices; ++i) {
-        frontier[i] = false;
+__global__ void bfsKernel(int *d_edges, int *d_edgesOffset, int *d_distance, int *changed, int N, int level) {
+    int thid = blockIdx.x * blockDim.x + threadIdx.x;
+    int valueChange = 0;
+
+    if (thid < N && d_distance[thid] == level) {
+        int u = thid;
+        for (int i = d_edgesOffset[u]; d_edges[i] != -1; i++) {
+            int v = d_edges[i];
+            if (level + 1 < d_distance[v]) {
+                d_distance[v] = level + 1;
+                valueChange = 1;
+            }
+        }
     }
 
-    bool *visited = new bool[numberOfVertices];
-    for (auto i = 0; i < numberOfVertices; ++i) {
-        visited[i] = false;
+    if (valueChange) {
+        atomicMax(changed, valueChange);
     }
+}
 
-    int *cost = new int[numberOfVertices];
-    for (auto i = 0; i < numberOfVertices; ++i) {
-        cost[i] = numeric_limits<int>::max();
-    }
+vector<int> Graph::bfsGPU(int startVertex) {
+    const int numberOfVertices = vertices.size();
+    const int numberOfEdges = edges.size();
+    vector<int> distance(numberOfVertices, numeric_limits<int>::max());
+    const int n_blocks = (numberOfVertices + 256 - 1) / 256;
 
-    frontier[startVertex] = true;
-    cost[startVertex] = 0;
+    // Initialization of GPU variables
+    int *d_adjacencyList;
+    int *d_edgesOffset;
+    int *d_edgesSize;
+    int *d_changed;
+    int *d_distance; // output
 
-    // Allocate GPU memory
-    int *d_vertices, *d_edges, *d_cost, *d_numberOfVertices;
-    bool *d_frontier, *d_visited;
-
-    hipMalloc((void **)&d_vertices, numberOfVertices * sizeof(int));
-    hipMalloc((void **)&d_edges, numberOfEdges * sizeof(int));
-    hipMalloc((void **)&d_frontier, numberOfVertices * sizeof(bool));
-    hipMalloc((void **)&d_visited, numberOfVertices * sizeof(bool));
-    hipMalloc((void **)&d_cost, numberOfVertices * sizeof(int));
-    hipMalloc((void **)&d_numberOfVertices, sizeof(int));
-
-    // Copy data to GPU
-    hipMemcpy(d_vertices, vertices, numberOfVertices * sizeof(int), hipMemcpyHostToDevice);
-    hipMemcpy(d_edges, edges, numberOfEdges * sizeof(int), hipMemcpyHostToDevice);
-    hipMemcpy(d_frontier, frontier, numberOfVertices * sizeof(bool), hipMemcpyHostToDevice);
-    hipMemcpy(d_visited, visited, numberOfVertices * sizeof(bool), hipMemcpyHostToDevice);
-    hipMemcpy(d_cost, cost, numberOfVertices * sizeof(int), hipMemcpyHostToDevice);
-    hipMemcpy(d_numberOfVertices, &numberOfVertices, sizeof(int), hipMemcpyHostToDevice);
-
-    const unsigned threadsPerBlock = 256;
-    const unsigned blocks = (numberOfVertices + threadsPerBlock - 1) / threadsPerBlock;
-   
+    // Initialization of CPU variables
     int level = 0;
-    while (true) {
-        printf("Level: %d\n\n", level);
-        level++;
-        // call kernel
-        hipLaunchKernelGGL(bfsKernel, dim3(blocks), dim3(threadsPerBlock), 0, 0, d_vertices, d_edges, d_frontier,
-                           d_visited, d_cost, d_numberOfVertices);
+    int changed = 1;
 
-        // we only process one BFS level at a time so we wait:
+    // Allocation on device
+    const int size = numberOfVertices * sizeof(int);
+    const int adjacencySize = (numberOfEdges + numberOfVertices) * sizeof(int);
+    hipMalloc((void **)&d_adjacencyList, adjacencySize);
+    hipMalloc((void **)&d_edgesOffset, size);
+    hipMalloc((void **)&d_edgesSize, size);
+    hipMalloc((void **)&d_changed, sizeof(int));
+    hipMalloc((void **)&d_distance, size);
+
+    // Copy inputs to device
+
+    hipMemcpy(d_adjacencyList, edges.data(), adjacencySize, hipMemcpyHostToDevice);
+    hipMemcpy(d_edgesOffset, vertices.data(), size, hipMemcpyHostToDevice);
+    hipMemcpy(d_changed, &changed, sizeof(int), hipMemcpyHostToDevice);
+
+    auto startTime = chrono::steady_clock::now();
+    distance = vector<int>(numberOfVertices, INT_MAX);
+    distance[startVertex] = 0;
+    hipMemcpy(d_distance, distance.data(), size, hipMemcpyHostToDevice);
+
+    while (changed) {
+        changed = 0;
+        hipMemcpy(d_changed, &changed, sizeof(int), hipMemcpyHostToDevice);
+        // computeNextQueue<<<n_blocks, N_THREADS_PER_BLOCK>>> (d_adjacencyList,
+        // d_edgesOffset, d_edgesSize, d_distance, currentQueueSize, d_currentQueue,
+        // d_nextQueueSize, d_nextQueue, level);
+        // hipLaunchKernelGGL(bfsKernel, dim3(n_blocks), dim3(N_THREADS_PER_BLOCK),
+        // 0, 0, G.numVertices, level, d_adjacencyList, d_edgesOffset, d_edgesSize,
+        // d_distance, d_changed);
+        hipLaunchKernelGGL(bfsKernel, dim3(n_blocks), dim3(256), 0, 0, d_adjacencyList, d_edgesOffset, d_distance,
+                           d_changed, numberOfVertices, level);
         hipDeviceSynchronize();
-
-        // copy visited array back to CPU so we can perform the while loop condition check
-        hipMemcpy(frontier, d_frontier, numberOfVertices * sizeof(bool), hipMemcpyDeviceToHost);
-        
-        // check if we're done
-        bool frontierEmpty = true;
-        for (auto i = 0; i < numberOfVertices; ++i) {
-            printf("%d, ", frontier[i]);
-            if (frontier[i]) {
-                frontierEmpty = false;
-                break;
-            }
-        }
-        printf("\n");
-        if (frontierEmpty) {
-            break;
-        }
+        ++level;
+        hipMemcpy(&changed, d_changed, sizeof(int), hipMemcpyDeviceToHost);
     }
 
-    // copy cost array back to CPU so we can get the results
-    hipMemcpy(cost, d_cost, numberOfVertices * sizeof(int), hipMemcpyDeviceToHost);
+    hipMemcpy(&distance[0], d_distance, size, hipMemcpyDeviceToHost);
+    auto endTime = std::chrono::steady_clock::now();
+    auto duration = chrono::duration_cast<chrono::milliseconds>(endTime - startTime).count();
+    printf("Elapsed time for naive linear GPU implementation (without copying "
+           "graph) : %li ms.\n",
+           duration);
 
-    hipFree(d_vertices);
-    hipFree(d_edges);
-    hipFree(d_cost);
-    hipFree(d_frontier);
-    hipFree(d_visited);
-    hipFree(d_numberOfVertices);
+    // Cleanup
+    hipFree(d_adjacencyList);
+    hipFree(d_edgesOffset);
+    hipFree(d_edgesSize);
+    hipFree(d_changed);
+    hipFree(d_distance);
 
-    /* for (auto i = 0; i < numberOfVertices; ++i) {
-        cout << "Distance from " << startVertex << " to " << i << " is: " << cost[i] << endl;
-    }*/
-
-    vector<int> vectorCost;
-    vectorCost.resize(numberOfVertices);
-
-    for (int i = 0; i < numberOfVertices; ++i) {
-        vectorCost[i] = cost[i];
-    }
-
-    delete[] frontier;
-    delete[] visited;
-    delete[] cost;
-
-    return vectorCost;
+    return distance;
 }
 
 vector<int> Graph::bfsCPU(int startVertex) {
+    const int numberOfVertices = vertices.size();
+    const int numberOfEdges = edges.size();
+
     vector<bool> visited(numberOfVertices, false);
     vector<int> cost(numberOfVertices, numeric_limits<int>::max());
     list<int> queue;

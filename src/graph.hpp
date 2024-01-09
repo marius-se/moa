@@ -6,15 +6,14 @@
 
 class Graph {
   public:
-    Graph(int vertices[], const int numberOfVertices, int edges[], const int numberOfEdges);
-    Graph(const std::string csvFilePath, const bool reverseColumns, const int numberOfVertices, const int numberOFEdges);
-    std::vector<int> bfs(int startVertex);
+    Graph(std::vector<int> vertices, std::vector<int> edges);
+    Graph(const std::string csvFilePath, const bool reverseColumns, const int numberOfVertices,
+          const int numberOFEdges);
     std::vector<int> bfsCPU(int startVertex);
+    std::vector<int> bfsGPU(int startVertex);
     ~Graph();
-    const int numberOfVertices;
-    const int numberOfEdges;
-    int *vertices;
-    int *edges;
+    std::vector<int> vertices;
+    std::vector<int> edges;
 };
 
 #endif
