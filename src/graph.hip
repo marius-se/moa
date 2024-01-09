@@ -1,11 +1,8 @@
-#include <algorithm>
 #include <hip/amd_detail/amd_hip_runtime.h>
 #include <hip/driver_types.h>
 #include <hip/hip_runtime.h>
-#include <iostream>
 #include <limits>
 #include <list>
-#include <map>
 #include <vector>
 
 #include "csv_loader.hpp"
@@ -29,11 +26,10 @@ Graph::Graph(vector<int> vertices, vector<int> edges) : vertices(vertices), edge
 Graph::Graph(const string csvFilePath, const bool reverseColumns, const int numberOfVertices, const int numberOfEdges) {
     vector<array<int, 2>> csvRows = CSVLoader::readCSV(csvFilePath);
     int edgesArraySize = numberOfEdges + numberOfVertices;
-    this->edges = vector<int>(edgesArraySize, -1);
-    cout << edges.size() << endl;
+    edges = vector<int>(edgesArraySize, -1);
     // by default point all vertices to the last element in edges, which will always be -1, and thus represent a
     // vertex without any edges
-    this->vertices = vector<int>(numberOfVertices, edgesArraySize - 1); 
+    vertices = vector<int>(numberOfVertices, edgesArraySize - 1);
 
     vertices[0] = 0;
     int currentVertex = 0;
@@ -55,33 +51,11 @@ Graph::Graph(const string csvFilePath, const bool reverseColumns, const int numb
             edges[previousPointer] = toVertex;
         }
     }
+    printf("Successfully constructed graph from CSV (%zu vertices, %zu edges)\n", vertices.size(),
+           edges.size() - vertices.size());
 }
 
 Graph::~Graph() {}
-
-__global__ void simpleBfs(int N, int level, int *d_adjacencyList, int *d_edgesOffset, int *d_distance, int *d_parent,
-                          int *changed) {
-    int thid = blockIdx.x * blockDim.x + threadIdx.x;
-    int valueChange = 0;
-
-    printf("thid: %d. d_distance[thid]: %d. Level: %d\n", thid, d_distance[thid], level);
-    if (thid < N && d_distance[thid] == level) {
-        printf("N: %d. Level: %d. Changed: %d\n", N, level, *changed);
-        int u = thid;
-        for (int i = d_edgesOffset[u]; d_adjacencyList[i] != -1; i++) {
-            int v = d_adjacencyList[i];
-            if (level + 1 < d_distance[v]) {
-                // d_distance[v] = level + 1;
-                // d_parent[v] = i;
-                valueChange = 1;
-            }
-        }
-    }
-
-    if (valueChange) {
-        *changed = valueChange;
-    }
-}
 
 __global__ void bfsKernel(int *d_edges, int *d_edgesOffset, int *d_distance, int *changed, int N, int level) {
     int thid = blockIdx.x * blockDim.x + threadIdx.x;
@@ -92,6 +66,7 @@ __global__ void bfsKernel(int *d_edges, int *d_edgesOffset, int *d_distance, int
         for (int i = d_edgesOffset[u]; d_edges[i] != -1; i++) {
             int v = d_edges[i];
             if (level + 1 < d_distance[v]) {
+                atomicExch(&d_distance[v], level + 1);
                 d_distance[v] = level + 1;
                 valueChange = 1;
             }
@@ -122,10 +97,9 @@ vector<int> Graph::bfsGPU(int startVertex) {
 
     // Allocation on device
     const int size = numberOfVertices * sizeof(int);
-    const int adjacencySize = (numberOfEdges + numberOfVertices) * sizeof(int);
+    const int adjacencySize = numberOfEdges * sizeof(int);
     hipMalloc((void **)&d_adjacencyList, adjacencySize);
     hipMalloc((void **)&d_edgesOffset, size);
-    hipMalloc((void **)&d_edgesSize, size);
     hipMalloc((void **)&d_changed, sizeof(int));
     hipMalloc((void **)&d_distance, size);
 
@@ -159,9 +133,7 @@ vector<int> Graph::bfsGPU(int startVertex) {
     hipMemcpy(&distance[0], d_distance, size, hipMemcpyDeviceToHost);
     auto endTime = std::chrono::steady_clock::now();
     auto duration = chrono::duration_cast<chrono::milliseconds>(endTime - startTime).count();
-    printf("Elapsed time for naive linear GPU implementation (without copying "
-           "graph) : %li ms.\n",
-           duration);
+    printf("Elapsed time for GPU implementation (without copying graph) : %li ms.\n", duration);
 
     // Cleanup
     hipFree(d_adjacencyList);
@@ -174,8 +146,8 @@ vector<int> Graph::bfsGPU(int startVertex) {
 }
 
 vector<int> Graph::bfsCPU(int startVertex) {
+    auto startTime = chrono::steady_clock::now();
     const int numberOfVertices = vertices.size();
-    const int numberOfEdges = edges.size();
 
     vector<bool> visited(numberOfVertices, false);
     vector<int> cost(numberOfVertices, numeric_limits<int>::max());
@@ -185,7 +157,6 @@ vector<int> Graph::bfsCPU(int startVertex) {
     cost[startVertex] = 0;
     queue.push_back(startVertex);
 
-    printf("\n");
     while (!queue.empty()) {
         int vertex = queue.front();
         queue.pop_front();
@@ -203,6 +174,8 @@ vector<int> Graph::bfsCPU(int startVertex) {
             }
         }
     }
-    printf("\n");
+    auto endTime = std::chrono::steady_clock::now();
+    auto duration = chrono::duration_cast<chrono::milliseconds>(endTime - startTime).count();
+    printf("Elapsed time for CPU implementation: %li ms.\n", duration);
     return cost;
 }
