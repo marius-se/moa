@@ -7,7 +7,7 @@
 
 class CSVLoader {
 public:
-    static std::vector<std::array<int, 2>> readCSV(std::string filePath);
+    static std::vector<std::array<int, 2>> readCSV(std::string filePath, size_t expectedNumberOfRows = -1);
 };
 
 #endif

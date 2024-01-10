@@ -6,6 +6,7 @@ include(CTest)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS 1)
 
+add_subdirectory(apps)
 add_subdirectory(src)
 add_subdirectory(tests)
 

@@ -24,7 +24,7 @@ Graph::Graph(vector<int> vertices, vector<int> edges) : vertices(vertices), edge
  * - there is no header row
  */
 Graph::Graph(const string csvFilePath, const bool reverseColumns, const size_t numberOfVertices, const size_t numberOfEdges) {
-    vector<array<int, 2>> csvRows = CSVLoader::readCSV(csvFilePath);
+    vector<array<int, 2>> csvRows = CSVLoader::readCSV(csvFilePath, numberOfEdges);
     int edgesArraySize = numberOfEdges + numberOfVertices;
     edges = vector<int>(edgesArraySize, -1);
     // by default point all vertices to the last element in edges, which will always be -1, and thus represent a
@@ -34,14 +34,15 @@ Graph::Graph(const string csvFilePath, const bool reverseColumns, const size_t n
     vertices[0] = 0;
     int currentVertex = 0;
     int previousPointer = -1;
-    printf("Number of CSV rows: %zu\n", csvRows.size());
+    bool isFirstVertex = true;
+    printf("Constructing graph from csv...\n");
     for (int i = 0; i < csvRows.size(); ++i) {
         int fromVertexColumn = reverseColumns ? 1 : 0;
         int toVertexColumn = reverseColumns ? 0 : 1;
         int fromVertex = csvRows[i][fromVertexColumn] - 1;
         int toVertex = csvRows[i][toVertexColumn] - 1;
 
-        if (currentVertex != fromVertex) {
+        if (currentVertex != fromVertex && !isFirstVertex) {
             previousPointer += 2; // jump over the -1 separator
             edges[previousPointer] = toVertex;
             vertices[fromVertex] = previousPointer;
@@ -49,6 +50,7 @@ Graph::Graph(const string csvFilePath, const bool reverseColumns, const size_t n
         } else {
             previousPointer++;
             edges[previousPointer] = toVertex;
+            isFirstVertex = false;
         }
     }
     printf("Successfully constructed graph from CSV (%zu vertices, %zu edges)\n", vertices.size(),
@@ -78,7 +80,7 @@ __global__ void bfsKernel(int *d_edges, int *d_edgesOffset, int *d_distance, int
     }
 }
 
-vector<int> Graph::bfsGPU(int startVertex) {
+vector<int> Graph::bfsGPU(int startVertex, int maxLevel) {
     const size_t numberOfVertices = vertices.size();
     const size_t numberOfEdges = edges.size();
     vector<int> distance(numberOfVertices, numeric_limits<int>::max());
@@ -116,7 +118,7 @@ vector<int> Graph::bfsGPU(int startVertex) {
     distance[startVertex] = 0;
     HIP_CHECK(hipMemcpy(d_distance, distance.data(), size, hipMemcpyHostToDevice));
 
-    while (changed) {
+    while (changed && ((maxLevel == -1) ? true : level <= maxLevel)) {
         printf("Level %d\r", level);
         changed = 0;
         HIP_CHECK(hipMemcpy(d_changed, &changed, sizeof(int), hipMemcpyHostToDevice));
