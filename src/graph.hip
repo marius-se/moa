@@ -98,25 +98,26 @@ vector<int> Graph::bfsGPU(int startVertex) {
     // Allocation on device
     const int size = numberOfVertices * sizeof(int);
     const int adjacencySize = numberOfEdges * sizeof(int);
-    hipMalloc((void **)&d_adjacencyList, adjacencySize);
-    hipMalloc((void **)&d_edgesOffset, size);
-    hipMalloc((void **)&d_changed, sizeof(int));
-    hipMalloc((void **)&d_distance, size);
+    HIP_CHECK(hipMalloc((void **)&d_adjacencyList, adjacencySize));
+    HIP_CHECK(hipMalloc((void **)&d_edgesOffset, size));
+    HIP_CHECK(hipMalloc((void **)&d_changed, sizeof(int)));
+    HIP_CHECK(hipMalloc((void **)&d_distance, size));
 
     // Copy inputs to device
 
-    hipMemcpy(d_adjacencyList, edges.data(), adjacencySize, hipMemcpyHostToDevice);
-    hipMemcpy(d_edgesOffset, vertices.data(), size, hipMemcpyHostToDevice);
-    hipMemcpy(d_changed, &changed, sizeof(int), hipMemcpyHostToDevice);
+    HIP_CHECK(hipMemcpy(d_adjacencyList, edges.data(), adjacencySize, hipMemcpyHostToDevice));
+    HIP_CHECK(hipMemcpy(d_edgesOffset, vertices.data(), size, hipMemcpyHostToDevice));
+    HIP_CHECK(hipMemcpy(d_changed, &changed, sizeof(int), hipMemcpyHostToDevice));
 
     auto startTime = chrono::steady_clock::now();
     distance = vector<int>(numberOfVertices, INT_MAX);
     distance[startVertex] = 0;
-    hipMemcpy(d_distance, distance.data(), size, hipMemcpyHostToDevice);
+    HIP_CHECK(hipMemcpy(d_distance, distance.data(), size, hipMemcpyHostToDevice));
 
     while (changed) {
+        printf("Level %d\r", level);
         changed = 0;
-        hipMemcpy(d_changed, &changed, sizeof(int), hipMemcpyHostToDevice);
+        HIP_CHECK(hipMemcpy(d_changed, &changed, sizeof(int), hipMemcpyHostToDevice));
         // computeNextQueue<<<n_blocks, N_THREADS_PER_BLOCK>>> (d_adjacencyList,
         // d_edgesOffset, d_edgesSize, d_distance, currentQueueSize, d_currentQueue,
         // d_nextQueueSize, d_nextQueue, level);
@@ -125,22 +126,23 @@ vector<int> Graph::bfsGPU(int startVertex) {
         // d_distance, d_changed);
         hipLaunchKernelGGL(bfsKernel, dim3(n_blocks), dim3(256), 0, 0, d_adjacencyList, d_edgesOffset, d_distance,
                            d_changed, numberOfVertices, level);
-        hipDeviceSynchronize();
+        HIP_CHECK(hipDeviceSynchronize());
         ++level;
-        hipMemcpy(&changed, d_changed, sizeof(int), hipMemcpyDeviceToHost);
+        HIP_CHECK(hipMemcpy(&changed, d_changed, sizeof(int), hipMemcpyDeviceToHost));
     }
 
-    hipMemcpy(&distance[0], d_distance, size, hipMemcpyDeviceToHost);
+    printf("Level %d\n", level);
+
+    HIP_CHECK(hipMemcpy(&distance[0], d_distance, size, hipMemcpyDeviceToHost));
     auto endTime = std::chrono::steady_clock::now();
     auto duration = chrono::duration_cast<chrono::milliseconds>(endTime - startTime).count();
     printf("Elapsed time for GPU implementation (without copying graph) : %li ms.\n", duration);
 
     // Cleanup
-    hipFree(d_adjacencyList);
-    hipFree(d_edgesOffset);
-    hipFree(d_edgesSize);
-    hipFree(d_changed);
-    hipFree(d_distance);
+    HIP_CHECK(hipFree(d_adjacencyList));
+    HIP_CHECK(hipFree(d_edgesOffset));
+    HIP_CHECK(hipFree(d_changed));
+    HIP_CHECK(hipFree(d_distance));
 
     return distance;
 }

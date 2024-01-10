@@ -35,10 +35,21 @@ TEST_CASE("Calculate BFS using CPU") {
 }
 
 TEST_CASE("Benchmark on poc dataset") {
+    printf("Benchmarking pokec\n");
     Graph graph("/home/marius/Downloads/soc-pokec-relationships.csv", false, 1632803, 30622564);
 
     std::vector<int> distanceGPU = graph.bfsGPU(5);
     std::vector<int> distanceCPU = graph.bfsCPU(5);
+
+    REQUIRE(distanceCPU == distanceGPU);
+}
+
+TEST_CASE("Benchmark on ogb dataset") {
+    printf("Benchmarking OGB Papers100M\n");
+    Graph graph("/home/marius/Developer/edges.csv", true, 111059956, 1615685872);
+
+    std::vector<int> distanceCPU = graph.bfsCPU(5);
+    std::vector<int> distanceGPU = graph.bfsGPU(5);
 
     REQUIRE(distanceCPU == distanceGPU);
 }
