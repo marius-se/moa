@@ -23,7 +23,7 @@ Graph::Graph(vector<int> vertices, vector<int> edges) : vertices(vertices), edge
  * - there are no duplicates
  * - there is no header row
  */
-Graph::Graph(const string csvFilePath, const bool reverseColumns, const int numberOfVertices, const int numberOfEdges) {
+Graph::Graph(const string csvFilePath, const bool reverseColumns, const size_t numberOfVertices, const size_t numberOfEdges) {
     vector<array<int, 2>> csvRows = CSVLoader::readCSV(csvFilePath);
     int edgesArraySize = numberOfEdges + numberOfVertices;
     edges = vector<int>(edgesArraySize, -1);
@@ -79,10 +79,11 @@ __global__ void bfsKernel(int *d_edges, int *d_edgesOffset, int *d_distance, int
 }
 
 vector<int> Graph::bfsGPU(int startVertex) {
-    const int numberOfVertices = vertices.size();
-    const int numberOfEdges = edges.size();
+    const size_t numberOfVertices = vertices.size();
+    const size_t numberOfEdges = edges.size();
     vector<int> distance(numberOfVertices, numeric_limits<int>::max());
-    const int n_blocks = (numberOfVertices + 256 - 1) / 256;
+    const int workgroup_size = 1024;
+    const int n_blocks = (numberOfVertices + workgroup_size - 1) / workgroup_size;
 
     // Initialization of GPU variables
     int *d_adjacencyList;
@@ -96,8 +97,9 @@ vector<int> Graph::bfsGPU(int startVertex) {
     int changed = 1;
 
     // Allocation on device
-    const int size = numberOfVertices * sizeof(int);
-    const int adjacencySize = numberOfEdges * sizeof(int);
+    const size_t size = numberOfVertices * sizeof(int);
+    const size_t adjacencySize = numberOfEdges * sizeof(int);
+    printf("Allocating %f GB for adjacency list\n", static_cast<double>(adjacencySize) / (1024 * 1024 * 1024));
     HIP_CHECK(hipMalloc((void **)&d_adjacencyList, adjacencySize));
     HIP_CHECK(hipMalloc((void **)&d_edgesOffset, size));
     HIP_CHECK(hipMalloc((void **)&d_changed, sizeof(int)));
@@ -124,7 +126,7 @@ vector<int> Graph::bfsGPU(int startVertex) {
         // hipLaunchKernelGGL(bfsKernel, dim3(n_blocks), dim3(N_THREADS_PER_BLOCK),
         // 0, 0, G.numVertices, level, d_adjacencyList, d_edgesOffset, d_edgesSize,
         // d_distance, d_changed);
-        hipLaunchKernelGGL(bfsKernel, dim3(n_blocks), dim3(256), 0, 0, d_adjacencyList, d_edgesOffset, d_distance,
+        hipLaunchKernelGGL(bfsKernel, dim3(n_blocks), dim3(workgroup_size), 0, 0, d_adjacencyList, d_edgesOffset, d_distance,
                            d_changed, numberOfVertices, level);
         HIP_CHECK(hipDeviceSynchronize());
         ++level;

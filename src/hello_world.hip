@@ -18,6 +18,7 @@ int HelloWorld::helloWorld() {
     cout << " System Minor " << devProp.minor << endl;
     cout << " System Major " << devProp.major << endl;
     cout << " Device Name " << devProp.name << endl;
+    cout << " Max Allocatable Memory: " << devProp.totalGlobalMem / (1024 * 1024 * 1024) << "GB" << endl;
     cout << "-----" << endl;
 
     /* Initial input,output for the host and create memory objects for the kernel*/
